@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Lazy LaTeX - AI Prompt Optimizer</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+    <header>
+        <h1>Lazy LaTeX 🦥</h1>
+        <p>Pre-compile math notation into context-optimized Gemini prompts</p>
+    </header>
+
+    <main class="sandbox-container">
+        <!-- Left Column: Input Box -->
+        <section class="panel input-panel">
+            <h2>Raw LaTeX Input</h2>
+            <textarea 
+                id="latex-input" 
+                placeholder="Paste your raw LaTeX here... (e.g., \begin{align} x_{n+1} = 3x_n + 1 \end{align})"
+            ></textarea>
+            <button id="compile-btn">Optimize Prompt</button>
+        </section>
+
+        <!-- Right Column: Output Box -->
+        <section class="panel output-panel">
+            <h2>Optimized Gemini Prompt</h2>
+            <div class="output-wrapper">
+                <textarea 
+                    id="prompt-output" 
+                    readonly 
+                    placeholder="Your structured, token-efficient Gemini prompt will appear here..."
+                ></textarea>
+                <button id="copy-btn" class="secondary-btn">Copy Prompt</button>
+            </div>
+        </section>
+    </main>
+
+    <footer>
+        <p>Built for the Build with Gemini XPRIZE | Open-Access Architecture</p>
+    </footer>
+
+    <script src="app.js"></script>
+</body>
+</html>
