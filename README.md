@@ -17,17 +17,17 @@ Our mission is to decouple mathematical syntax from logical execution. By automa
 ## 🏛️ Core Architecture & Strategy
 
 Lazy LaTeX is designed to operate as a lean, responsive, single-page web utility optimized for rapid deployment and accessibility.
-[Raw, Messy LaTeX Input]
-│
-▼
+```text
+[Raw, Messy LaTeX Input] 
+           │
+           ▼
 [Lazy LaTeX Parser Engine] ──► Extracts Variables, Matrix Arrays, & Blocks
-│
-▼
+           │
+           ▼
 [Gemini API (3.5 Flash)]  ──► Context-Optimized Processing Vector
-│
-▼
+           │
+           ▼
 [Structured Prompt Frame] ──► Clear, Logical Output Ready for AI Analysis
-
 
 ### Key Pillars
 *   **Contextual Isolation:** Automatically separates dense multi-line alignment blocks (such as `\begin{align}`) and nested superscripts to preserve localized variables.
