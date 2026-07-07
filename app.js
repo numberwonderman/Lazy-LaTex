@@ -84,28 +84,41 @@ function preprocessLatex(rawInput) {
         });
     }
 
-    // Capture display math delimiters ($$ ... $$ and \[ ... \]) if no
-    // heavy environments were caught
-    if (environments.length === 0) {
-        const displayMathRegex = /\$\$([\s\S]*?)\$\$|\\\[([\s\S]*?)\\\]/g;
-        while ((match = displayMathRegex.exec(cleaned)) !== null) {
-            const content = match[1] !== undefined ? match[1] : match[2];
-            environments.push({
-                type: 'display-math',
-                content: content.trim().replace(/\s+/g, ' ')
-            });
-        }
+    // Mask out already-captured environment blocks before scanning for
+    // standalone math, so we don't re-match $...$ or $$...$$ that appears
+    // *inside* an align/matrix block we already extracted.
+    let remaining = cleaned;
+    envRegex.lastIndex = 0;
+    while ((match = envRegex.exec(cleaned)) !== null) {
+        remaining = remaining.replace(match[0], '');
     }
 
-    // Fallback further still: inline math ($ ... $), only if nothing else was found
-    if (environments.length === 0) {
-        const inlineMathRegex = /\$([^$]+)\$/g;
-        while ((match = inlineMathRegex.exec(cleaned)) !== null) {
-            environments.push({
-                type: 'inline-math',
-                content: match[1].trim().replace(/\s+/g, ' ')
-            });
-        }
+    // ALWAYS scan for standalone display math ($$ ... $$ and \[ ... \]),
+    // regardless of whether environment blocks were also found — these
+    // commonly co-occur in real documents (e.g. an align block followed
+    // by a standalone $$...$$ formula later in the same excerpt), and the
+    // previous "only if zero environments found" logic silently dropped
+    // any such formulas whenever at least one environment was present.
+    const displayMathRegex = /\$\$([\s\S]*?)\$\$|\\\[([\s\S]*?)\\\]/g;
+    while ((match = displayMathRegex.exec(remaining)) !== null) {
+        const content = match[1] !== undefined ? match[1] : match[2];
+        environments.push({
+            type: 'display-math',
+            content: content.trim().replace(/\s+/g, ' ')
+        });
+    }
+    // Mask matched display-math out too, so inline-math scan below doesn't
+    // re-match the same $$ content as a pair of $ delimiters.
+    remaining = remaining.replace(/\$\$([\s\S]*?)\$\$|\\\[([\s\S]*?)\\\]/g, '');
+
+    // ALWAYS scan for standalone inline math ($ ... $) too, on whatever
+    // text is left after environments and display math have been removed.
+    const inlineMathRegex = /\$([^$]+)\$/g;
+    while ((match = inlineMathRegex.exec(remaining)) !== null) {
+        environments.push({
+            type: 'inline-math',
+            content: match[1].trim().replace(/\s+/g, ' ')
+        });
     }
 
     // 4. Variable Registry Compilation
