@@ -10,10 +10,6 @@ const copyBtn = document.getElementById('copy-btn');
 let ai = null;
 
 // --- System Instructions for Prompt Optimization ---
-// NOTE: Updated to reflect that input has already been pre-processed
-// locally (environments isolated, variable registry built) before
-// reaching Gemini. This avoids asking Gemini to redo work the local
-// parser already did, preserving the token savings from preprocessLatex().
 const SYSTEM_INSTRUCTION = `
 You are an expert prompt-engineering engine specializing in advanced mathematics and computer science.
 
@@ -37,8 +33,6 @@ re-parse or re-strip the original raw LaTeX — that step is already complete.
 
 // --- Initialize Gemini API client ---
 function initClient() {
-    // For local/Codespaces development, you can check a prompt or search parameters
-    // To ensure security, we look for a temporary storage token or ask the user
     let apiKey = localStorage.getItem('GEMINI_API_KEY');
 
     if (!apiKey) {
@@ -70,10 +64,6 @@ function preprocessLatex(rawInput) {
     // 3. Environment Isolation & Extraction
     const environments = [];
 
-    // FIX: [p|b]?matrix was a character class bug — it matched a single
-    // optional character 'p', '|', or 'b', not the strings "pmatrix"/"bmatrix".
-    // It happened to work by luck for p/b matrix but would also wrongly
-    // accept "|matrix", and missed vmatrix/Vmatrix/Bmatrix entirely.
     const envRegex = /\\begin\{(align\*?|equation\*?|pmatrix|bmatrix|vmatrix|Vmatrix|Bmatrix|matrix)\}([\s\S]*?)\\end\{\1\}/g;
     let match;
 
@@ -93,12 +83,7 @@ function preprocessLatex(rawInput) {
         remaining = remaining.replace(match[0], '');
     }
 
-    // ALWAYS scan for standalone display math ($$ ... $$ and \[ ... \]),
-    // regardless of whether environment blocks were also found — these
-    // commonly co-occur in real documents (e.g. an align block followed
-    // by a standalone $$...$$ formula later in the same excerpt), and the
-    // previous "only if zero environments found" logic silently dropped
-    // any such formulas whenever at least one environment was present.
+    // ALWAYS scan for standalone display math ($$ ... $$ and \[ ... \]).
     const displayMathRegex = /\$\$([\s\S]*?)\$\$|\\\[([\s\S]*?)\\\]/g;
     while ((match = displayMathRegex.exec(remaining)) !== null) {
         const content = match[1] !== undefined ? match[1] : match[2];
@@ -107,30 +92,35 @@ function preprocessLatex(rawInput) {
             content: content.trim().replace(/\s+/g, ' ')
         });
     }
-    // Mask matched display-math out too, so inline-math scan below doesn't
-    // re-match the same $$ content as a pair of $ delimiters.
     remaining = remaining.replace(/\$\$([\s\S]*?)\$\$|\\\[([\s\S]*?)\\\]/g, '');
 
-    // ALWAYS scan for standalone inline math ($ ... $) too, on whatever
-    // text is left after environments and display math have been removed.
+    // NOTE: Inline math ($...$) is intentionally NOT added to `environments`
+    // as its own numbered block. A bare inline mention like `$\lambda_1$` or
+    // `$i$` in prose is not a structural unit — treating every one as its
+    // own "Environment N" caused severe over-fragmentation (e.g. a single
+    // prose sentence mentioning three variables produced three near-empty
+    // environments, one of which duplicated content already captured by a
+    // real display-math block). Instead, inline math is scanned separately
+    // below and folded directly into the Variable Registry, which is the
+    // correct destination for single-symbol/short-expression mentions.
     const inlineMathRegex = /\$([^$]+)\$/g;
+    const inlineMatches = [];
     while ((match = inlineMathRegex.exec(remaining)) !== null) {
-        environments.push({
-            type: 'inline-math',
-            content: match[1].trim().replace(/\s+/g, ' ')
-        });
+        inlineMatches.push(match[1].trim());
     }
 
     // 4. Variable Registry Compilation
     const variableRegistry = {};
     const varRegex = /(\\[a-zA-Z]+(?:_\{[^\s}]+\}|_[a-zA-Z0-9])?|[a-zA-Z](?:_\{[^\s}]+\}|_[a-zA-Z0-9])?)/g;
 
-    environments.forEach(env => {
+    // Helper: scan a block of text for variable-like tokens and register
+    // each one (first occurrence only) with surrounding context.
+    function registerVariablesFrom(text) {
         let varMatch;
-        while ((varMatch = varRegex.exec(env.content)) !== null) {
+        varRegex.lastIndex = 0;
+        while ((varMatch = varRegex.exec(text)) !== null) {
             const token = varMatch[1];
 
-            // Filter out common operational LaTeX commands that aren't variables
             if (token.startsWith('\\') && /^(sin|cos|tan|log|ln|exp|det|max|min|lim|sum|int|frac|sqrt|partial|to|cdot)$/.test(token.slice(1))) {
                 continue;
             }
@@ -138,13 +128,19 @@ function preprocessLatex(rawInput) {
             if (!variableRegistry[token]) {
                 const idx = varMatch.index;
                 const start = Math.max(0, idx - 15);
-                const end = Math.min(env.content.length, idx + token.length + 15);
-                const context = `...${env.content.substring(start, end).trim()}...`;
+                const end = Math.min(text.length, idx + token.length + 15);
+                const context = `...${text.substring(start, end).trim()}...`;
 
                 variableRegistry[token] = context;
             }
         }
-    });
+    }
+
+    environments.forEach(env => registerVariablesFrom(env.content));
+
+    // Fold inline math mentions into the registry too (source of e.g.
+    // \lambda_1, \lambda_2, i in "if $|\lambda_i| < 1$ for all $i$...").
+    inlineMatches.forEach(expr => registerVariablesFrom(expr));
 
     // 5. Structure the Intermediate Representation for Gemini
     let processedOutput = "=== PRE-PROCESSED LATEX IR ===\n";
@@ -184,16 +180,14 @@ async function optimizePrompt() {
     promptOutput.value = "Running local pre-processor step and sending optimized payload to Gemini...";
 
     try {
-        // Run the client-side local parser first to reduce token weights
         const optimizedPayload = preprocessLatex(rawInput);
 
-        // Utilizing the standard gemini-2.5-flash endpoint for hyper-fast client performance
         const response = await ai.models.generateContent({
             model: 'gemini-2.5-flash',
-            contents: optimizedPayload, // Passing the stripped, token-efficient IR string
+            contents: optimizedPayload,
             config: {
                 systemInstruction: SYSTEM_INSTRUCTION,
-                temperature: 0.2 // Low temperature ensures rigid, deterministic mathematical logic mapping
+                temperature: 0.2
             }
         });
 
@@ -218,11 +212,11 @@ async function copyToClipboard() {
         await navigator.clipboard.writeText(textToCopy);
         const originalText = copyBtn.textContent;
         copyBtn.textContent = "Copied! ✓";
-        copyBtn.style.backgroundColor = "#16a34a"; // Green flash indicator
+        copyBtn.style.backgroundColor = "#16a34a";
 
         setTimeout(() => {
             copyBtn.textContent = originalText;
-            copyBtn.style.backgroundColor = ""; // Reset
+            copyBtn.style.backgroundColor = "";
         }, 2000);
     } catch (err) {
         console.error("Clipboard copy failed:", err);
