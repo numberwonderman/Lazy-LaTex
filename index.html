@@ -15,7 +15,6 @@
     </header>
 
     <main class="sandbox-container">
-        <!-- Left Column: Input Box -->
         <section class="panel input-panel">
             <h2>Raw LaTeX Input</h2>
             <textarea 
@@ -23,9 +22,17 @@
                 placeholder="Paste your raw LaTeX here... (e.g., \begin{align} x_{n+1} = 3x_n + 1 \end{align})"
             ></textarea>
             <button id="compile-btn">Optimize Prompt</button>
+            
+            <div style="margin-top: 12px; text-align: center;">
+                <small style="font-family: sans-serif; color: #6b7280; font-size: 0.85rem;">
+                    Need an API key? Generate one via 
+                    <a href="https://aistudio.google.com/" target="_blank" rel="noopener noreferrer" style="color: #2563eb; text-decoration: underline; font-weight: 500;">
+                        Google AI Studio
+                    </a>
+                </small>
+            </div>
         </section>
 
-        <!-- Right Column: Output Box -->
         <section class="panel output-panel">
             <h2>Optimized Gemini Prompt</h2>
             <div class="output-wrapper">
