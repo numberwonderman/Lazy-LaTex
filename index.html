@@ -9,40 +9,51 @@
 </head>
 <body>
 
+    <a href="#main-content" class="skip-link">Skip to main content</a>
+
     <header>
         <h1>Lazy LaTeX 🦥</h1>
         <p>Pre-compile math notation into context-optimized Gemini prompts</p>
     </header>
 
-    <main class="sandbox-container">
+    <main class="sandbox-container" id="main-content">
         <section class="panel input-panel">
-            <h2>Raw LaTeX Input</h2>
+            <h2 id="input-heading">Raw LaTeX Input</h2>
+            <label for="latex-input" class="visually-hidden">Raw LaTeX input</label>
             <textarea 
                 id="latex-input" 
+                aria-labelledby="input-heading"
+                aria-describedby="latex-input-hint"
                 placeholder="Paste your raw LaTeX here... (e.g., \begin{align} x_{n+1} = 3x_n + 1 \end{align})"
             ></textarea>
-            <button id="compile-btn">Optimize Prompt</button>
+            <span id="latex-input-hint" class="visually-hidden">Paste your raw LaTeX code here, then activate the Optimize Prompt button below.</span>
+            <button id="compile-btn" type="button">Optimize Prompt</button>
             
             <div style="margin-top: 12px; text-align: center;">
                 <small style="font-family: sans-serif; color: #6b7280; font-size: 0.85rem;">
                     Need an API key? Generate one via 
                     <a href="https://aistudio.google.com/" target="_blank" rel="noopener noreferrer" style="color: #2563eb; text-decoration: underline; font-weight: 500;">
                         Google AI Studio
+                        <span class="visually-hidden">(opens in a new tab)</span>
                     </a>
                 </small>
             </div>
         </section>
 
         <section class="panel output-panel">
-            <h2>Optimized Gemini Prompt</h2>
+            <h2 id="output-heading">Optimized Gemini Prompt</h2>
             <div class="output-wrapper">
+                <label for="prompt-output" class="visually-hidden">Optimized Gemini prompt output</label>
                 <textarea 
                     id="prompt-output" 
                     readonly 
+                    aria-labelledby="output-heading"
+                    aria-live="polite"
                     placeholder="Your structured, token-efficient Gemini prompt will appear here..."
                 ></textarea>
-                <button id="copy-btn" class="secondary-btn">Copy Prompt</button>
+                <button id="copy-btn" class="secondary-btn" type="button">Copy Prompt</button>
             </div>
+            <div id="copy-status" class="visually-hidden" role="status" aria-live="polite"></div>
         </section>
     </main>
 
