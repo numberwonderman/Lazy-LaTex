@@ -5,6 +5,7 @@ const latexInput = document.getElementById('latex-input');
 const promptOutput = document.getElementById('prompt-output');
 const compileBtn = document.getElementById('compile-btn');
 const copyBtn = document.getElementById('copy-btn');
+const copyStatus = document.getElementById('copy-status');
 
 // --- State Management ---
 let ai = null;
@@ -178,6 +179,9 @@ async function optimizePrompt() {
     compileBtn.disabled = true;
     compileBtn.textContent = "Compiling Engine...";
     promptOutput.value = "Running local pre-processor step and sending optimized payload to Gemini...";
+    if (copyStatus) {
+        copyStatus.textContent = "Compiling your optimized prompt, please wait.";
+    }
 
     try {
         const optimizedPayload = preprocessLatex(rawInput);
@@ -192,9 +196,15 @@ async function optimizePrompt() {
         });
 
         promptOutput.value = response.text;
+        if (copyStatus) {
+            copyStatus.textContent = "Optimized prompt ready.";
+        }
     } catch (error) {
         console.error("API Pipeline Error:", error);
         promptOutput.value = `Execution Failure: Could not optimize string.\n\nDetails: ${error.message}\n\nVerify your API key is active in AI Studio or reset local storage.`;
+        if (copyStatus) {
+            copyStatus.textContent = "Something went wrong while optimizing your prompt. See the output panel for details.";
+        }
     } finally {
         compileBtn.disabled = false;
         compileBtn.textContent = "Optimize Prompt";
@@ -213,6 +223,9 @@ async function copyToClipboard() {
         const originalText = copyBtn.textContent;
         copyBtn.textContent = "Copied! ✓";
         copyBtn.style.backgroundColor = "#16a34a";
+        if (copyStatus) {
+            copyStatus.textContent = "Prompt copied to clipboard.";
+        }
 
         setTimeout(() => {
             copyBtn.textContent = originalText;
@@ -220,6 +233,9 @@ async function copyToClipboard() {
         }, 2000);
     } catch (err) {
         console.error("Clipboard copy failed:", err);
+        if (copyStatus) {
+            copyStatus.textContent = "Copy failed. Please select and copy the text manually.";
+        }
     }
 }
 
