@@ -6,6 +6,7 @@ const promptOutput = document.getElementById('prompt-output');
 const compileBtn = document.getElementById('compile-btn');
 const copyBtn = document.getElementById('copy-btn');
 const copyStatus = document.getElementById('copy-status');
+const tokenStats = document.getElementById('token-stats');
 
 // --- State Management ---
 let ai = null;
@@ -98,12 +99,8 @@ function preprocessLatex(rawInput) {
     // NOTE: Inline math ($...$) is intentionally NOT added to `environments`
     // as its own numbered block. A bare inline mention like `$\lambda_1$` or
     // `$i$` in prose is not a structural unit — treating every one as its
-    // own "Environment N" caused severe over-fragmentation (e.g. a single
-    // prose sentence mentioning three variables produced three near-empty
-    // environments, one of which duplicated content already captured by a
-    // real display-math block). Instead, inline math is scanned separately
-    // below and folded directly into the Variable Registry, which is the
-    // correct destination for single-symbol/short-expression mentions.
+    // own "Environment N" caused severe over-fragmentation. Instead, inline
+    // math is scanned separately below and folded directly into the Variable Registry.
     const inlineMathRegex = /\$([^$]+)\$/g;
     const inlineMatches = [];
     while ((match = inlineMathRegex.exec(remaining)) !== null) {
@@ -138,9 +135,6 @@ function preprocessLatex(rawInput) {
     }
 
     environments.forEach(env => registerVariablesFrom(env.content));
-
-    // Fold inline math mentions into the registry too (source of e.g.
-    // \lambda_1, \lambda_2, i in "if $|\lambda_i| < 1$ for all $i$...").
     inlineMatches.forEach(expr => registerVariablesFrom(expr));
 
     // 5. Structure the Intermediate Representation for Gemini
@@ -179,6 +173,12 @@ async function optimizePrompt() {
     compileBtn.disabled = true;
     compileBtn.textContent = "Compiling Engine...";
     promptOutput.value = "Running local pre-processor step and sending optimized payload to Gemini...";
+    
+    if (tokenStats) {
+        tokenStats.style.display = "block";
+        tokenStats.textContent = "📊 Calculating token reduction benchmarks...";
+    }
+    
     if (copyStatus) {
         copyStatus.textContent = "Compiling your optimized prompt, please wait.";
     }
@@ -186,6 +186,31 @@ async function optimizePrompt() {
     try {
         const optimizedPayload = preprocessLatex(rawInput);
 
+        // --- Step 1. Get Token Counts for Benchmarking ---
+        const rawTokenResp = await ai.models.countTokens({
+            model: 'gemini-2.5-flash',
+            contents: rawInput,
+        });
+
+        const optimizedTokenResp = await ai.models.countTokens({
+            model: 'gemini-2.5-flash',
+            contents: optimizedPayload,
+        });
+
+        const rawTokens = rawTokenResp.totalTokens;
+        const optTokens = optimizedTokenResp.totalTokens;
+        const diff = rawTokens - optTokens;
+        const percentSaved = rawTokens > 0 ? ((diff / rawTokens) * 100).toFixed(1) : 0;
+
+        if (tokenStats) {
+            tokenStats.innerHTML = `
+                📊 <strong>Benchmark Stats:</strong> Raw Input: <code>${rawTokens}</code> tokens | 
+                Lazy LaTeX IR: <code>${optTokens}</code> tokens | 
+                <strong>Saved: ${diff} tokens (${percentSaved}%)</strong>
+            `;
+        }
+
+        // --- Step 2. Generate Optimized Prompt from Gemini ---
         const response = await ai.models.generateContent({
             model: 'gemini-2.5-flash',
             contents: optimizedPayload,
@@ -196,12 +221,16 @@ async function optimizePrompt() {
         });
 
         promptOutput.value = response.text;
+        
         if (copyStatus) {
             copyStatus.textContent = "Optimized prompt ready.";
         }
     } catch (error) {
         console.error("API Pipeline Error:", error);
         promptOutput.value = `Execution Failure: Could not optimize string.\n\nDetails: ${error.message}\n\nVerify your API key is active in AI Studio or reset local storage.`;
+        if (tokenStats) {
+            tokenStats.style.display = "none";
+        }
         if (copyStatus) {
             copyStatus.textContent = "Something went wrong while optimizing your prompt. See the output panel for details.";
         }
