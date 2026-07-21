@@ -15,22 +15,13 @@ let ai = null;
 const SYSTEM_INSTRUCTION = `
 You are an expert prompt-engineering engine specializing in advanced mathematics and computer science.
 
-The input you receive has ALREADY been pre-processed by a local parser: math environments
-have been isolated and labeled, boilerplate formatting has been stripped, and a variable
-registry has already been extracted with local context for each variable.
+The input you receive has ALREADY been pre-processed by a local parser into a token-minimized Intermediate Representation (IR): math environments are isolated, formatting boilerplate has been stripped, and a compact variable registry array has been extracted.
 
-Your task is to take this pre-processed intermediate representation and finalize it into a
-polished, structured AI prompt frame that:
-1. Presents the Variable Registry clearly at the top (refine it if needed, but do not
-   recompute it from scratch).
-2. Presents the isolated equation/environment blocks in a clean, structurally distinct
-   Markdown or JSON-like format so an LLM can isolate variables from prose.
-3. Appends a logical execution goal appropriate to the content (e.g., 'Analyze the
-   stability', 'Compute the sequence parameters', 'Check for structural edge cases').
+Your task is to take this compact IR payload and finalize it into a polished, structured AI prompt frame that:
+1. Presents the isolated equations and variable list cleanly.
+2. Appends a logical execution goal appropriate to the content (e.g., 'Analyze the stability', 'Compute the sequence parameters', 'Check for structural edge cases').
 
-Ensure the final output is directly ready for a developer or researcher to copy and paste
-into an LLM workflow for maximum token efficiency and flawless logical reasoning. Do not
-re-parse or re-strip the original raw LaTeX — that step is already complete.
+Ensure the final output is directly ready for a developer or researcher to copy and paste into an LLM workflow for maximum token efficiency and flawless logical reasoning. Do not re-parse or re-strip the original raw LaTeX — that step is already complete.
 `;
 
 // --- Initialize Gemini API client ---
@@ -51,21 +42,20 @@ function initClient() {
     return false;
 }
 
-// --- Local Pre-processing Parser Engine ---
+// --- Local Pre-processing Parser Engine (Token-Optimized) ---
 function preprocessLatex(rawInput) {
     let cleaned = rawInput;
 
     // 1. Strip comments
     cleaned = cleaned.replace(/%[^\n]*/g, '');
 
-    // 2. Strip non-semantic visual boilerplate (\left, \right, spacing, alignment markers)
+    // 2. Strip non-semantic visual boilerplate
     cleaned = cleaned.replace(/\\left|\\right/g, '');
     cleaned = cleaned.replace(/\\quad|\\qquad|\\,|\\;|\\!/g, '');
-    cleaned = cleaned.replace(/&/g, ' '); // Strip alignment tabs
+    cleaned = cleaned.replace(/&/g, ' ');
 
     // 3. Environment Isolation & Extraction
     const environments = [];
-
     const envRegex = /\\begin\{(align\*?|equation\*?|pmatrix|bmatrix|vmatrix|Vmatrix|Bmatrix|matrix)\}([\s\S]*?)\\end\{\1\}/g;
     let match;
 
@@ -76,85 +66,70 @@ function preprocessLatex(rawInput) {
         });
     }
 
-    // Mask out already-captured environment blocks before scanning for
-    // standalone math, so we don't re-match $...$ or $$...$$ that appears
-    // *inside* an align/matrix block we already extracted.
     let remaining = cleaned;
     envRegex.lastIndex = 0;
     while ((match = envRegex.exec(cleaned)) !== null) {
         remaining = remaining.replace(match[0], '');
     }
 
-    // ALWAYS scan for standalone display math ($$ ... $$ and \[ ... \]).
     const displayMathRegex = /\$\$([\s\S]*?)\$\$|\\\[([\s\S]*?)\\\]/g;
     while ((match = displayMathRegex.exec(remaining)) !== null) {
         const content = match[1] !== undefined ? match[1] : match[2];
         environments.push({
-            type: 'display-math',
+            type: 'display',
             content: content.trim().replace(/\s+/g, ' ')
         });
     }
     remaining = remaining.replace(/\$\$([\s\S]*?)\$\$|\\\[([\s\S]*?)\\\]/g, '');
 
-    // NOTE: Inline math ($...$) is intentionally NOT added to `environments`
-    // as its own numbered block. A bare inline mention like `$\lambda_1$` or
-    // `$i$` in prose is not a structural unit — treating every one as its
-    // own "Environment N" caused severe over-fragmentation. Instead, inline
-    // math is scanned separately below and folded directly into the Variable Registry.
     const inlineMathRegex = /\$([^$]+)\$/g;
     const inlineMatches = [];
     while ((match = inlineMathRegex.exec(remaining)) !== null) {
         inlineMatches.push(match[1].trim());
     }
 
-    // 4. Variable Registry Compilation
-    const variableRegistry = {};
+    // 4. Compact Variable Registry Extraction (List tokens cleanly)
+    const variables = new Set();
     const varRegex = /(\\[a-zA-Z]+(?:_\{[^\s}]+\}|_[a-zA-Z0-9])?|[a-zA-Z](?:_\{[^\s}]+\}|_[a-zA-Z0-9])?)/g;
 
-    // Helper: scan a block of text for variable-like tokens and register
-    // each one (first occurrence only) with surrounding context.
-    function registerVariablesFrom(text) {
-        let varMatch;
+    function collectVars(text) {
+        let vMatch;
         varRegex.lastIndex = 0;
-        while ((varMatch = varRegex.exec(text)) !== null) {
-            const token = varMatch[1];
-
-            if (token.startsWith('\\') && /^(sin|cos|tan|log|ln|exp|det|max|min|lim|sum|int|frac|sqrt|partial|to|cdot)$/.test(token.slice(1))) {
-                continue;
-            }
-
-            if (!variableRegistry[token]) {
-                const idx = varMatch.index;
-                const start = Math.max(0, idx - 15);
-                const end = Math.min(text.length, idx + token.length + 15);
-                const context = `...${text.substring(start, end).trim()}...`;
-
-                variableRegistry[token] = context;
+        while ((vMatch = varRegex.exec(text)) !== null) {
+            const token = vMatch[1];
+            if (!/^(sin|cos|tan|log|ln|exp|det|max|min|lim|sum|int|frac|sqrt|partial|to|cdot)$/.test(token.slice(1))) {
+                variables.add(token);
             }
         }
     }
 
-    environments.forEach(env => registerVariablesFrom(env.content));
-    inlineMatches.forEach(expr => registerVariablesFrom(expr));
+    environments.forEach(e => collectVars(e.content));
+    inlineMatches.forEach(m => collectVars(m));
 
-    // 5. Structure the Intermediate Representation for Gemini
-    let processedOutput = "=== PRE-PROCESSED LATEX IR ===\n";
+    // 5. Build a tight, token-minimized IR payload
+    let compactIR = "IR_MODE: MATH_OPTIMIZED\n";
+    
+    if (variables.size > 0) {
+        compactIR += `VARS: [${Array.from(variables).join(', ')}]\n`;
+    }
 
     if (environments.length > 0) {
-        processedOutput += "\n[Isolated Environments]\n";
+        compactIR += "EQS:\n";
         environments.forEach((env, i) => {
-            processedOutput += `${i + 1}. (${env.type}): ${env.content}\n`;
+            compactIR += `${i+1}:${env.content}\n`;
         });
-    } else {
-        processedOutput += `\n[Cleaned Content]: ${cleaned.trim().replace(/\s+/g, ' ')}\n`;
     }
 
-    processedOutput += "\n[Local Variable Registry]\n";
-    for (const [v, ctx] of Object.entries(variableRegistry)) {
-        processedOutput += `- ${v} (Context: ${ctx})\n`;
+    const strippedProse = remaining.replace(/\\documentclass[\s\S]*?\\begin\{document\}/, '')
+                                   .replace(/\\end\{document\}/, '')
+                                   .replace(/\\[a-zA-Z]+/g, ' ')
+                                   .replace(/\s+/g, ' ')
+                                   .trim();
+    if (strippedProse) {
+        compactIR += `TXT: ${strippedProse}`;
     }
 
-    return processedOutput;
+    return compactIR;
 }
 
 // --- Trigger Compilation Optimization ---
