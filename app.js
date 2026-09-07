@@ -55,56 +55,55 @@ function preprocessLatex(rawInput) {
     cleaned = cleaned.replace(/&/g, ' ');
 
     // 3. Environment Isolation & Extraction
+    // Each pass both records the matched math and strips it from `remaining`
+    // in one traversal, so extracted content can never leak into TXT twice.
     const environments = [];
     const envRegex = /\\begin\{(align\*?|equation\*?|pmatrix|bmatrix|vmatrix|Vmatrix|Bmatrix|matrix)\}([\s\S]*?)\\end\{\1\}/g;
-    let match;
-
-    while ((match = envRegex.exec(cleaned)) !== null) {
-        environments.push({
-            type: match[1],
-            content: match[2].trim().replace(/\s+/g, ' ')
-        });
-    }
-
-    let remaining = cleaned;
-    envRegex.lastIndex = 0;
-    while ((match = envRegex.exec(cleaned)) !== null) {
-        remaining = remaining.replace(match[0], '');
-    }
+    let remaining = cleaned.replace(envRegex, (fullMatch, type, content) => {
+        environments.push({ type, content: content.trim().replace(/\s+/g, ' ') });
+        return '';
+    });
 
     const displayMathRegex = /\$\$([\s\S]*?)\$\$|\\\[([\s\S]*?)\\\]/g;
-    while ((match = displayMathRegex.exec(remaining)) !== null) {
-        const content = match[1] !== undefined ? match[1] : match[2];
-        environments.push({
-            type: 'display',
-            content: content.trim().replace(/\s+/g, ' ')
-        });
-    }
-    remaining = remaining.replace(/\$\$([\s\S]*?)\$\$|\\\[([\s\S]*?)\\\]/g, '');
+    remaining = remaining.replace(displayMathRegex, (fullMatch, g1, g2) => {
+        const content = g1 !== undefined ? g1 : g2;
+        environments.push({ type: 'display', content: content.trim().replace(/\s+/g, ' ') });
+        return '';
+    });
 
     const inlineMathRegex = /\$([^$]+)\$/g;
-    const inlineMatches = [];
-    while ((match = inlineMathRegex.exec(remaining)) !== null) {
-        inlineMatches.push(match[1].trim());
-    }
+    remaining = remaining.replace(inlineMathRegex, (fullMatch, content) => {
+        environments.push({ type: 'inline', content: content.trim().replace(/\s+/g, ' ') });
+        return '';
+    });
 
     // 4. Compact Variable Registry Extraction (List tokens cleanly)
     const variables = new Set();
     const varRegex = /(\\[a-zA-Z]+(?:_\{[^\s}]+\}|_[a-zA-Z0-9])?|[a-zA-Z](?:_\{[^\s}]+\}|_[a-zA-Z0-9])?)/g;
+    // Formatting/operator commands (\times, \hat, \leq, ...) are not variables.
+    // Only bare letters and named Greek letters belong in the registry.
+    const GREEK_LETTERS = /^(alpha|beta|gamma|delta|epsilon|varepsilon|zeta|eta|theta|vartheta|iota|kappa|lambda|mu|nu|xi|pi|varpi|rho|varrho|sigma|varsigma|tau|upsilon|phi|varphi|chi|psi|omega|Gamma|Delta|Theta|Lambda|Xi|Pi|Sigma|Upsilon|Phi|Psi|Omega)$/;
 
     function collectVars(text) {
+        // \text{}, \mathrm{}, \operatorname{} wrap prose/labels, not variables
+        // (e.g. \text{foo} should not register "f" and "o" as variables).
+        const scanText = text.replace(/\\(?:text|mathrm|operatorname)\{[^}]*\}/g, '');
         let vMatch;
         varRegex.lastIndex = 0;
-        while ((vMatch = varRegex.exec(text)) !== null) {
+        while ((vMatch = varRegex.exec(scanText)) !== null) {
             const token = vMatch[1];
-            if (!/^(sin|cos|tan|log|ln|exp|det|max|min|lim|sum|int|frac|sqrt|partial|to|cdot)$/.test(token.slice(1))) {
+            if (token.startsWith('\\')) {
+                const baseName = token.match(/^\\([a-zA-Z]+)/)[1];
+                if (GREEK_LETTERS.test(baseName)) {
+                    variables.add(token);
+                }
+            } else {
                 variables.add(token);
             }
         }
     }
 
     environments.forEach(e => collectVars(e.content));
-    inlineMatches.forEach(m => collectVars(m));
 
     // 5. Build a tight, token-minimized IR payload
     let compactIR = "IR_MODE: MATH_OPTIMIZED\n";
