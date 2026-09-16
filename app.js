@@ -1,4 +1,5 @@
 import { GoogleGenAI } from 'https://esm.run/@google/genai';
+import { parse, extractRegions, serialize, extractVariables, regionLabel } from './latex-parser.js';
 
 // --- DOM Elements ---
 const latexInput = document.getElementById('latex-input');
@@ -43,71 +44,31 @@ function initClient() {
 }
 
 // --- Local Pre-processing Parser Engine (Token-Optimized) ---
+// Parses raw LaTeX into a real tree (see latex-parser.js) rather than
+// chaining regexes over flat text, so escapes (\%, \$), nested braces, and
+// math tucked inside non-math environments are all handled correctly.
 function preprocessLatex(rawInput) {
-    let cleaned = rawInput;
+    // Preamble boilerplate is dropped up front, before tokenizing -- it's
+    // never math and never worth preserving even as prose.
+    const cleaned = rawInput
+        .replace(/\\documentclass[\s\S]*?\\begin\{document\}/, '')
+        .replace(/\\end\{document\}/, '');
 
-    // 1. Strip comments
-    cleaned = cleaned.replace(/%[^\n]*/g, '');
+    const tree = parse(cleaned);
+    const { regions, remaining } = extractRegions(tree);
 
-    // 2. Strip non-semantic visual boilerplate
-    cleaned = cleaned.replace(/\\left|\\right/g, '');
-    cleaned = cleaned.replace(/\\quad|\\qquad|\\,|\\;|\\!/g, '');
-    cleaned = cleaned.replace(/&/g, ' ');
-
-    // 3. Environment Isolation & Extraction
-    // Each pass both records the matched math and strips it from `remaining`
-    // in one traversal, so extracted content can never leak into TXT twice.
-    const environments = [];
-    const envRegex = /\\begin\{(align\*?|equation\*?|pmatrix|bmatrix|vmatrix|Vmatrix|Bmatrix|matrix)\}([\s\S]*?)\\end\{\1\}/g;
-    let remaining = cleaned.replace(envRegex, (fullMatch, type, content) => {
-        environments.push({ type, content: content.trim().replace(/\s+/g, ' ') });
-        return '';
-    });
-
-    const displayMathRegex = /\$\$([\s\S]*?)\$\$|\\\[([\s\S]*?)\\\]/g;
-    remaining = remaining.replace(displayMathRegex, (fullMatch, g1, g2) => {
-        const content = g1 !== undefined ? g1 : g2;
-        environments.push({ type: 'display', content: content.trim().replace(/\s+/g, ' ') });
-        return '';
-    });
-
-    const inlineMathRegex = /\$([^$]+)\$/g;
-    remaining = remaining.replace(inlineMathRegex, (fullMatch, content) => {
-        environments.push({ type: 'inline', content: content.trim().replace(/\s+/g, ' ') });
-        return '';
-    });
-
-    // 4. Compact Variable Registry Extraction (List tokens cleanly)
     const variables = new Set();
-    const varRegex = /(\\[a-zA-Z]+(?:_\{[^\s}]+\}|_[a-zA-Z0-9])?|[a-zA-Z](?:_\{[^\s}]+\}|_[a-zA-Z0-9])?)/g;
-    // Formatting/operator commands (\times, \hat, \leq, ...) are not variables.
-    // Only bare letters and named Greek letters belong in the registry.
-    const GREEK_LETTERS = /^(alpha|beta|gamma|delta|epsilon|varepsilon|zeta|eta|theta|vartheta|iota|kappa|lambda|mu|nu|xi|pi|varpi|rho|varrho|sigma|varsigma|tau|upsilon|phi|varphi|chi|psi|omega|Gamma|Delta|Theta|Lambda|Xi|Pi|Sigma|Upsilon|Phi|Psi|Omega)$/;
+    const environments = regions.map(node => {
+        extractVariables(node).forEach(v => variables.add(v));
+        return {
+            type: regionLabel(node),
+            content: serialize(node.children).trim().replace(/\s+/g, ' ')
+        };
+    });
 
-    function collectVars(text) {
-        // \text{}, \mathrm{}, \operatorname{} wrap prose/labels, not variables
-        // (e.g. \text{foo} should not register "f" and "o" as variables).
-        const scanText = text.replace(/\\(?:text|mathrm|operatorname)\{[^}]*\}/g, '');
-        let vMatch;
-        varRegex.lastIndex = 0;
-        while ((vMatch = varRegex.exec(scanText)) !== null) {
-            const token = vMatch[1];
-            if (token.startsWith('\\')) {
-                const baseName = token.match(/^\\([a-zA-Z]+)/)[1];
-                if (GREEK_LETTERS.test(baseName)) {
-                    variables.add(token);
-                }
-            } else {
-                variables.add(token);
-            }
-        }
-    }
-
-    environments.forEach(e => collectVars(e.content));
-
-    // 5. Build a tight, token-minimized IR payload
+    // Build a tight, token-minimized IR payload
     let compactIR = "IR_MODE: MATH_OPTIMIZED\n";
-    
+
     if (variables.size > 0) {
         compactIR += `VARS: [${Array.from(variables).join(', ')}]\n`;
     }
@@ -119,11 +80,10 @@ function preprocessLatex(rawInput) {
         });
     }
 
-    const strippedProse = remaining.replace(/\\documentclass[\s\S]*?\\begin\{document\}/, '')
-                                   .replace(/\\end\{document\}/, '')
-                                   .replace(/\\[a-zA-Z]+/g, ' ')
-                                   .replace(/\s+/g, ' ')
-                                   .trim();
+    const strippedProse = serialize(remaining)
+        .replace(/\\[a-zA-Z]+/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
     if (strippedProse) {
         compactIR += `TXT: ${strippedProse}`;
     }

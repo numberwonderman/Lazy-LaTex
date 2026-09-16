@@ -28,9 +28,10 @@ Lazy LaTeX is a single-page web utility with a simple pipeline:
            ▼
 [Optimized Prompt Output] ──► Ready to paste into any LLM workflow
 
-Note: the current version relies on Gemini itself (via a carefully engineered system instruction) to perform the restructuring — it does not yet include a local, client-side LaTeX parser. A planned next phase is to add real syntactic pre-processing (regex/AST-based extraction of environments and variables) so that boilerplate stripping happens before the API call, further reducing token cost and API dependency.
+The local pre-processor (`latex-parser.js`) is a dependency-free tokenizer and recursive-descent parser: it builds a real syntax tree of the input (environments, groups, commands, math regions) instead of matching flat regexes, so it correctly handles escaped characters (`\%`, `\$`), arbitrarily nested braces, and math tucked inside non-math environments before the compact IR is ever sent to Gemini.
 Key Pillars (current)
-LLM-Guided Restructuring: A specialized system prompt directs Gemini to standardize notation, build a variable registry, and isolate equation blocks.
+Local AST-Based Pre-Processing: A hand-rolled LaTeX tokenizer/parser isolates math environments and builds the variable registry client-side, before any API call.
+LLM-Guided Restructuring: A specialized system prompt directs Gemini to take that pre-processed IR and finalize it into a polished prompt frame.
 Zero-Overhead Deployment: Pure client-side JavaScript, no server, no hosting cost.
 BYOK (Bring Your Own Key): Users supply their own Gemini API key, stored only in local browser storage — never sent to any third-party server.
 🛠️ Tech Stack
